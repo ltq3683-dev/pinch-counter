@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>捏合计数器</title>
+<title>手势/语音计数器</title>
 <style>
   :root {
     --bg: #0b0f17;
@@ -25,6 +25,11 @@
   body {
     display: flex; flex-direction: column;
   }
+  body.mode-voice #video,
+  body.mode-voice #overlay,
+  body.mode-voice #flipBtn { display: none; }
+  body.mode-vision #voicePanel { display: none; }
+
   #stage {
     flex: 1;
     position: relative;
@@ -40,6 +45,7 @@
     transform: scaleX(-1);
   }
   #overlay { pointer-events: none; }
+
   #counter {
     position: absolute;
     top: 16px; left: 50%;
@@ -71,8 +77,64 @@
     pointer-events: none;
     backdrop-filter: blur(6px);
   }
-  #stateChip.pinched { background: rgba(6,214,160,0.25); color: var(--ok); }
-  #stateChip.open    { background: rgba(239,71,111,0.20); color: var(--danger); }
+  #stateChip.on  { background: rgba(6,214,160,0.25); color: var(--ok); }
+  #stateChip.off { background: rgba(239,71,111,0.20); color: var(--danger); }
+
+  /* Voice mode panel */
+  #voicePanel {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 45%, #161d2c 0%, #0b0f17 75%);
+    z-index: 2;
+  }
+  #voicePulse {
+    width: 42vmin; height: 42vmin;
+    border-radius: 50%;
+    background: rgba(76,201,240,0.10);
+    border: 3px solid rgba(76,201,240,0.35);
+    transform: scale(1);
+    transition: background 0.15s, border-color 0.15s;
+    will-change: transform;
+  }
+  #voicePulse.voiced {
+    background: rgba(6,214,160,0.30);
+    border-color: var(--ok);
+    box-shadow: 0 0 60px rgba(6,214,160,0.45);
+  }
+  #voiceMeter {
+    position: absolute;
+    bottom: 4vh; left: 8%; right: 8%;
+    height: 14px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 7px;
+    overflow: visible;
+  }
+  #voiceMeterFill {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    width: 0%;
+    background: linear-gradient(to right, #4cc9f0, #06d6a0);
+    border-radius: 7px;
+    transition: width 0.05s linear;
+  }
+  #voiceMeterThreshold {
+    position: absolute; top: -6px; bottom: -6px;
+    width: 3px;
+    background: var(--danger);
+    border-radius: 2px;
+    pointer-events: none;
+    left: 25%;
+    box-shadow: 0 0 6px rgba(239,71,111,0.6);
+  }
+  #voiceMeterLabel {
+    position: absolute;
+    left: 0; right: 0;
+    bottom: calc(4vh + 22px);
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    pointer-events: none;
+  }
+
   #status {
     position: absolute;
     bottom: calc(100% + 12px); left: 50%;
@@ -91,20 +153,43 @@
   }
   #status.show { opacity: 1; }
   #status.error { color: var(--danger); }
+
   #controls {
     position: relative;
     background: var(--panel);
     backdrop-filter: blur(12px);
-    padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+    padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
     display: grid;
     grid-template-columns: auto 1fr auto auto;
-    grid-template-rows: auto auto;
+    grid-template-rows: auto auto auto;
     gap: 10px 12px;
     align-items: center;
     border-top: 1px solid rgba(255,255,255,0.08);
     z-index: 20;
   }
-  #controls button {
+  #modeTabs {
+    grid-column: 1 / -1;
+    display: flex;
+    background: rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 3px;
+    gap: 3px;
+  }
+  .modeTab {
+    flex: 1;
+    border: none; background: transparent;
+    color: var(--muted);
+    font-weight: 600; font-size: 14px;
+    padding: 10px 0;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .modeTab.active {
+    background: var(--accent);
+    color: #001018;
+  }
+  #controls button:not(.modeTab) {
     border: none;
     background: rgba(76,201,240,0.15);
     color: var(--accent);
@@ -153,7 +238,8 @@
     border-radius: 50%; cursor: pointer;
     border: 2px solid #001018;
   }
-  #sensValue { font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; color: var(--text); }
+  #sensValue { font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; color: var(--text); }
+
   #hint {
     position: absolute;
     top: 50%; left: 50%;
@@ -167,6 +253,7 @@
   }
   #hint .big { font-size: 22px; color: var(--text); margin-bottom: 8px; }
   #hint.hidden { display: none; }
+
   #errBox {
     position: absolute;
     top: 12px; left: 12px; right: 12px;
@@ -186,33 +273,45 @@
   #errBox b { display: block; margin-bottom: 4px; font-size: 14px; }
 </style>
 </head>
-<body>
+<body class="mode-vision">
   <div id="stage">
     <video id="video" playsinline muted></video>
     <canvas id="overlay"></canvas>
+    <div id="voicePanel">
+      <div id="voicePulse"></div>
+      <div id="voiceMeterLabel">实时音量 · 红线 = 触发阈值</div>
+      <div id="voiceMeter">
+        <div id="voiceMeterFill"></div>
+        <div id="voiceMeterThreshold"></div>
+      </div>
+    </div>
     <div id="counter">0</div>
     <div id="stateChip">未启动</div>
     <div id="hint">
-      <div class="big">👋 捏合计数器</div>
-      <div>点击下方"启动摄像头"开始</div>
-      <div style="margin-top:8px;font-size:13px">握拳，拇指碰食指 = +1</div>
+      <div class="big" id="hintTitle">👋 捏合计数器</div>
+      <div id="hintSub1">点击下方"启动摄像头"开始</div>
+      <div id="hintSub2" style="margin-top:8px;font-size:13px">握拳，拇指碰食指 = +1</div>
     </div>
     <div id="errBox" hidden></div>
   </div>
   <div id="controls">
+    <div id="modeTabs">
+      <button class="modeTab active" data-mode="vision">视觉（手势）</button>
+      <button class="modeTab" data-mode="voice">语音（念佛）</button>
+    </div>
     <button id="startBtn">启动摄像头</button>
     <div id="status"></div>
     <button id="flipBtn" disabled>翻转</button>
     <button id="resetBtn">重置</button>
     <div id="sensWrap">
-      <label for="sensitivity">灵敏度</label>
+      <label for="sensitivity" id="sensLabel">灵敏度</label>
       <input type="range" id="sensitivity" min="0.15" max="0.60" step="0.01" value="0.35">
       <span id="sensValue">0.35</span>
     </div>
   </div>
 
 <script>
-// Global error catcher — must run before the module script so import failures are visible
+// Global error catcher — runs before the module script so import failures are visible
 (function () {
   const box = document.getElementById("errBox");
   function show(title, msg) {
@@ -231,10 +330,9 @@
     const r = e.reason;
     show("未处理的 Promise 错误", (r && (r.stack || r.message)) || String(r));
   });
-  // Detect if module never executed (e.g. CDN blocked) — main script sets window.__APP_LOADED = true
   setTimeout(() => {
     if (!window.__APP_LOADED) {
-      show("脚本未加载", "10 秒内 JS 模块没有执行。可能原因：\n• CDN (cdn.jsdelivr.net) 被拦截\n• MediaPipe 版本 URL 404\n• 浏览器不支持 ES Module\n\n请刷新重试，或在 Wi-Fi/数据切换后重试。");
+      show("脚本未加载", "10 秒内 JS 模块没有执行。可能原因：\n• CDN (cdn.jsdelivr.net) 被拦截\n• MediaPipe 版本 URL 404\n• 浏览器不支持 ES Module\n\n请刷新重试。");
     }
   }, 10000);
 })();
@@ -245,48 +343,78 @@ import { HandLandmarker, FilesetResolver } from
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs";
 
 const MEDIAPIPE_VERSION = "0.10.35";
-const WASM_URL   = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
-// Local model (hosted alongside index.html) — avoids storage.googleapis.com which is blocked in some regions
-const MODEL_URL  = "./hand_landmarker.task";
+const WASM_URL  = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
+const MODEL_URL = "./hand_landmarker.task";
 
-// MediaPipe hand landmark connections (21 points)
 const HAND_CONNECTIONS = [
-  [0,1],[1,2],[2,3],[3,4],          // thumb
-  [0,5],[5,6],[6,7],[7,8],          // index
-  [5,9],[9,10],[10,11],[11,12],     // middle
-  [9,13],[13,14],[14,15],[15,16],   // ring
-  [13,17],[17,18],[18,19],[19,20],  // pinky
-  [0,17]                            // palm base
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17]
 ];
 
-// DOM
+// ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
-const video      = $("video");
-const overlay    = $("overlay");
-const counterEl  = $("counter");
-const stateChip  = $("stateChip");
-const startBtn   = $("startBtn");
-const flipBtn    = $("flipBtn");
-const resetBtn   = $("resetBtn");
-const sensInput  = $("sensitivity");
-const sensValue  = $("sensValue");
-const statusEl   = $("status");
-const hintEl     = $("hint");
-const ctx        = overlay.getContext("2d");
+const video       = $("video");
+const overlay     = $("overlay");
+const counterEl   = $("counter");
+const stateChip   = $("stateChip");
+const startBtn    = $("startBtn");
+const flipBtn     = $("flipBtn");
+const resetBtn    = $("resetBtn");
+const sensInput   = $("sensitivity");
+const sensValue   = $("sensValue");
+const sensLabel   = $("sensLabel");
+const statusEl    = $("status");
+const hintEl      = $("hint");
+const hintTitle   = $("hintTitle");
+const hintSub1    = $("hintSub1");
+const hintSub2    = $("hintSub2");
+const voicePulse  = $("voicePulse");
+const voiceFill   = $("voiceMeterFill");
+const voiceThrEl  = $("voiceMeterThreshold");
+const modeTabsEls = document.querySelectorAll(".modeTab");
+const ctx         = overlay.getContext("2d");
 
-// State
+// ---------- Shared state ----------
+let currentMode = "vision";          // "vision" | "voice"
+let count = 0;
+let audioCtx = null;
+
+// ---------- Vision-mode state ----------
 let landmarker = null;
 let stream = null;
 let facingMode = "user";
 let rafId = null;
 let lastVideoTime = -1;
-let audioCtx = null;
-let count = 0;
-let pinchState = "open";          // "open" | "pinched"
+let pinchState = "open";
 let framesSinceHand = 0;
-let sensitivity = parseFloat(sensInput.value);
+let pinchSensitivity = parseFloat(sensInput.value);
 const HYSTERESIS_GAP = 0.10;
 const HAND_LOST_FRAMES = 6;
+
+// ---------- Voice-mode state ----------
+let audioStream = null;
+let analyser = null;
+let audioBuf = null;
+let voiceRafId = null;
+let voiceState = "silence";          // "silence" | "voiced"
+let voicedFrames = 0;
+let silenceFrames = 0;
+let smoothedRMS = 0;
+let voiceThreshold = 0.04;
+const VOICE_MIN_VOICED   = 4;        // ~67ms@60fps — filters clicks/coughs
+const VOICE_MIN_SILENCE  = 8;        // ~133ms — debounce between counts
+const VOICE_METER_MAX    = 0.20;     // RMS value mapped to 100% on meter
+const VOICE_SMOOTH       = 0.5;      // 0=no smoothing, 1=infinite
+
+// Slider config per mode
+const SENS_CFG = {
+  vision: { min: 0.15,  max: 0.60, step: 0.01,  value: 0.35,  decimals: 2, label: "捏合灵敏度" },
+  voice:  { min: 0.005, max: 0.15, step: 0.005, value: 0.04,  decimals: 3, label: "音量阈值" }
+};
 
 // ---------- UI helpers ----------
 function setStatus(msg, isError = false) {
@@ -294,27 +422,28 @@ function setStatus(msg, isError = false) {
   statusEl.classList.toggle("error", isError);
   if (msg) {
     statusEl.classList.add("show");
-    if (!isError) clearTimeout(setStatus._t), setStatus._t = setTimeout(() => statusEl.classList.remove("show"), 2200);
+    if (!isError) {
+      clearTimeout(setStatus._t);
+      setStatus._t = setTimeout(() => statusEl.classList.remove("show"), 2200);
+    }
   } else {
     statusEl.classList.remove("show");
   }
 }
-
 function updateCounter() {
   counterEl.textContent = count;
   counterEl.classList.remove("bump");
-  void counterEl.offsetWidth; // restart animation
+  void counterEl.offsetWidth;
   counterEl.classList.add("bump");
   setTimeout(() => counterEl.classList.remove("bump"), 180);
 }
-
 function setChip(text, cls) {
   stateChip.textContent = text;
   stateChip.className = "";
   if (cls) stateChip.classList.add(cls);
 }
 
-// ---------- Audio ----------
+// ---------- Audio (beep) ----------
 function beep() {
   if (!audioCtx) return;
   const t = audioCtx.currentTime;
@@ -330,21 +459,19 @@ function beep() {
   o.stop(t + 0.14);
 }
 
-// ---------- Drawing ----------
+// ---------- VISION MODE ----------
 function resizeOverlay() {
   const w = video.videoWidth, h = video.videoHeight;
   if (!w || !h) return;
   if (overlay.width !== w) overlay.width = w;
   if (overlay.height !== h) overlay.height = h;
 }
-
 function drawSkeleton(landmarks, isPinched) {
   const w = overlay.width, h = overlay.height;
   ctx.clearRect(0, 0, w, h);
   if (!landmarks || landmarks.length === 0) return;
   const lm = landmarks[0];
 
-  // connections
   ctx.lineWidth = Math.max(2, w / 320);
   ctx.strokeStyle = "rgba(76,201,240,0.85)";
   ctx.beginPath();
@@ -354,7 +481,6 @@ function drawSkeleton(landmarks, isPinched) {
   }
   ctx.stroke();
 
-  // landmark dots
   ctx.fillStyle = "rgba(232,238,247,0.9)";
   for (let i = 0; i < lm.length; i++) {
     if (i === 4 || i === 8) continue;
@@ -362,8 +488,6 @@ function drawSkeleton(landmarks, isPinched) {
     ctx.arc(lm[i].x * w, lm[i].y * h, Math.max(3, w / 220), 0, Math.PI * 2);
     ctx.fill();
   }
-
-  // thumb tip + index tip highlight
   const tipColor = isPinched ? "#06d6a0" : "#ef476f";
   ctx.fillStyle = tipColor;
   for (const i of [4, 8]) {
@@ -371,8 +495,6 @@ function drawSkeleton(landmarks, isPinched) {
     ctx.arc(lm[i].x * w, lm[i].y * h, Math.max(6, w / 110), 0, Math.PI * 2);
     ctx.fill();
   }
-
-  // line between tips
   ctx.strokeStyle = tipColor;
   ctx.lineWidth = Math.max(3, w / 220);
   ctx.beginPath();
@@ -380,14 +502,11 @@ function drawSkeleton(landmarks, isPinched) {
   ctx.lineTo(lm[8].x * w, lm[8].y * h);
   ctx.stroke();
 }
-
-// ---------- Pinch detection ----------
 function dist(a, b) {
   const dx = a.x - b.x, dy = a.y - b.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
-
-function processFrame(result) {
+function processVisionFrame(result) {
   const lms = result.landmarks;
   if (!lms || lms.length === 0) {
     framesSinceHand++;
@@ -405,8 +524,8 @@ function processFrame(result) {
   const refLen = dist(lm[5], lm[17]);
   if (refLen < 1e-6) { drawSkeleton(lms, pinchState === "pinched"); return; }
   const ratio = dist(lm[4], lm[8]) / refLen;
-  const closeThr = sensitivity;
-  const openThr  = sensitivity + HYSTERESIS_GAP;
+  const closeThr = pinchSensitivity;
+  const openThr  = pinchSensitivity + HYSTERESIS_GAP;
 
   if (pinchState === "open" && ratio < closeThr) {
     pinchState = "pinched";
@@ -416,41 +535,32 @@ function processFrame(result) {
   } else if (pinchState === "pinched" && ratio > openThr) {
     pinchState = "open";
   }
-
   setChip(
     pinchState === "pinched" ? `捏合 (${ratio.toFixed(2)})` : `松开 (${ratio.toFixed(2)})`,
-    pinchState
+    pinchState === "pinched" ? "on" : "off"
   );
   drawSkeleton(lms, pinchState === "pinched");
 }
-
-// ---------- Main loop ----------
-function tick() {
+function visionTick() {
   if (!landmarker || !stream) return;
   if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
     resizeOverlay();
     try {
       const result = landmarker.detectForVideo(video, performance.now());
-      processFrame(result);
+      processVisionFrame(result);
     } catch (e) {
       console.error("detectForVideo error:", e);
     }
   }
-  rafId = requestAnimationFrame(tick);
+  rafId = requestAnimationFrame(visionTick);
 }
-
-// ---------- Camera ----------
 async function startCamera() {
-  if (stream) {
-    stream.getTracks().forEach(t => t.stop());
-    stream = null;
-  }
-  const constraints = {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
     audio: false
-  };
-  stream = await navigator.mediaDevices.getUserMedia(constraints);
+  });
   video.srcObject = stream;
   await video.play();
   await new Promise(res => {
@@ -459,64 +569,187 @@ async function startCamera() {
   });
   resizeOverlay();
 }
-
-// ---------- Landmarker init ----------
+function stopVision() {
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+}
 async function initLandmarker() {
-  setStatus("加载模型中…");
+  setStatus("加载手部模型中…");
   const vision = await FilesetResolver.forVisionTasks(WASM_URL);
   try {
     landmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
-      runningMode: "VIDEO",
-      numHands: 1
+      runningMode: "VIDEO", numHands: 1
     });
   } catch (gpuErr) {
     console.warn("GPU delegate failed, falling back to CPU:", gpuErr);
     landmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
-      runningMode: "VIDEO",
-      numHands: 1
+      runningMode: "VIDEO", numHands: 1
     });
   }
   setStatus("模型已就绪");
 }
 
+// ---------- VOICE MODE ----------
+async function startMic() {
+  if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+  audioStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: true,
+      autoGainControl: false,
+      channelCount: 1
+    }
+  });
+  const src = audioCtx.createMediaStreamSource(audioStream);
+  if (analyser) { try { analyser.disconnect(); } catch {} }
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 1024;
+  analyser.smoothingTimeConstant = 0;
+  src.connect(analyser);
+  audioBuf = new Float32Array(analyser.fftSize);
+}
+function updateVoiceMeter(rms) {
+  const pct = Math.min(100, (rms / VOICE_METER_MAX) * 100);
+  voiceFill.style.width = pct + "%";
+  const scale = 1 + Math.min(rms / VOICE_METER_MAX, 1) * 0.5;
+  voicePulse.style.transform = `scale(${scale.toFixed(3)})`;
+}
+function updateVoiceThresholdLine() {
+  const pct = Math.min(100, (voiceThreshold / VOICE_METER_MAX) * 100);
+  voiceThrEl.style.left = pct + "%";
+}
+function voiceLoop() {
+  if (!analyser) return;
+  analyser.getFloatTimeDomainData(audioBuf);
+  let sumSq = 0;
+  for (let i = 0; i < audioBuf.length; i++) sumSq += audioBuf[i] * audioBuf[i];
+  const rms = Math.sqrt(sumSq / audioBuf.length);
+  smoothedRMS = smoothedRMS * VOICE_SMOOTH + rms * (1 - VOICE_SMOOTH);
+  updateVoiceMeter(smoothedRMS);
+
+  const isVoiced = smoothedRMS > voiceThreshold;
+  if (isVoiced) {
+    voicedFrames++;
+    silenceFrames = 0;
+    if (voiceState === "silence" && voicedFrames >= VOICE_MIN_VOICED) {
+      voiceState = "voiced";
+      count++;
+      updateCounter();
+      beep();
+      voicePulse.classList.add("voiced");
+      setChip(`捕获 #${count}`, "on");
+    }
+  } else {
+    silenceFrames++;
+    voicedFrames = 0;
+    if (voiceState === "voiced" && silenceFrames >= VOICE_MIN_SILENCE) {
+      voiceState = "silence";
+      voicePulse.classList.remove("voiced");
+      setChip("等待中", "off");
+    }
+  }
+  voiceRafId = requestAnimationFrame(voiceLoop);
+}
+function stopVoice() {
+  if (voiceRafId) { cancelAnimationFrame(voiceRafId); voiceRafId = null; }
+  if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+  if (analyser) { try { analyser.disconnect(); } catch {} analyser = null; }
+  voicePulse.classList.remove("voiced");
+  voicePulse.style.transform = "scale(1)";
+  voiceFill.style.width = "0%";
+}
+
+// ---------- Mode switching ----------
+function applyModeUI(mode) {
+  document.body.classList.toggle("mode-vision", mode === "vision");
+  document.body.classList.toggle("mode-voice",  mode === "voice");
+  modeTabsEls.forEach(t => t.classList.toggle("active", t.dataset.mode === mode));
+
+  const cfg = SENS_CFG[mode];
+  sensInput.min   = cfg.min;
+  sensInput.max   = cfg.max;
+  sensInput.step  = cfg.step;
+  sensInput.value = (mode === "vision") ? pinchSensitivity : voiceThreshold;
+  sensValue.textContent = parseFloat(sensInput.value).toFixed(cfg.decimals);
+  sensLabel.textContent = cfg.label;
+
+  if (mode === "vision") {
+    hintTitle.textContent = "👋 捏合计数器";
+    hintSub1.textContent  = '点击下方"启动摄像头"开始';
+    hintSub2.textContent  = "握拳，拇指碰食指 = +1";
+    startBtn.textContent  = "启动摄像头";
+  } else {
+    hintTitle.textContent = "🎙 念佛计数器";
+    hintSub1.textContent  = '点击下方"启动麦克风"开始';
+    hintSub2.textContent  = '念一句"阿弥陀佛" = +1（任何短句都行）';
+    startBtn.textContent  = "启动麦克风";
+    updateVoiceThresholdLine();
+  }
+  hintEl.classList.remove("hidden");
+  setChip("未启动", "");
+}
+async function switchMode(newMode) {
+  if (newMode === currentMode) return;
+  // tear down the mode we're leaving
+  if (currentMode === "vision") stopVision();
+  else                          stopVoice();
+  currentMode = newMode;
+  applyModeUI(newMode);
+}
+
 // ---------- Wire up ----------
+modeTabsEls.forEach(t => t.addEventListener("click", () => switchMode(t.dataset.mode)));
+
 startBtn.addEventListener("click", async () => {
   startBtn.disabled = true;
   startBtn.textContent = "启动中…";
   try {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === "suspended") await audioCtx.resume();
 
-    if (!landmarker) await initLandmarker();
-    await startCamera();
-
+    if (currentMode === "vision") {
+      if (!landmarker) await initLandmarker();
+      await startCamera();
+      pinchState = "open";
+      framesSinceHand = 0;
+      lastVideoTime = -1;
+      if (rafId) cancelAnimationFrame(rafId);
+      visionTick();
+      flipBtn.disabled = false;
+      setChip("等待手部出现", "");
+    } else {
+      await startMic();
+      voiceState = "silence";
+      voicedFrames = 0;
+      silenceFrames = 0;
+      smoothedRMS = 0;
+      updateVoiceThresholdLine();
+      if (voiceRafId) cancelAnimationFrame(voiceRafId);
+      voiceLoop();
+      setChip("等待中", "off");
+    }
     hintEl.classList.add("hidden");
-    flipBtn.disabled = false;
-    startBtn.textContent = "重新启动";
+    startBtn.textContent = currentMode === "vision" ? "重新启动" : "重新启动";
     startBtn.disabled = false;
-    setChip("等待手部出现", "");
-    pinchState = "open";
-    framesSinceHand = 0;
-    lastVideoTime = -1;
-    if (rafId) cancelAnimationFrame(rafId);
-    tick();
   } catch (e) {
     console.error(e);
+    const isVision = currentMode === "vision";
     let msg = "启动失败：" + (e && e.message ? e.message : e);
     if (e && (e.name === "NotAllowedError" || e.name === "PermissionDeniedError")) {
-      msg = "摄像头权限被拒绝，请在浏览器地址栏允许摄像头后重试";
+      msg = isVision
+        ? "摄像头权限被拒绝，请在浏览器地址栏允许后重试"
+        : "麦克风权限被拒绝，请在浏览器地址栏允许后重试";
     } else if (e && e.name === "NotFoundError") {
-      msg = "未找到可用摄像头";
+      msg = isVision ? "未找到可用摄像头" : "未找到可用麦克风";
     } else if (location.protocol === "file:") {
-      msg = "请通过 http://localhost 访问，file:// 无法使用摄像头";
+      msg = "请通过 http:// 或 https:// 访问，file:// 无法使用摄像头/麦克风";
     }
     setStatus(msg, true);
     statusEl.classList.add("show");
-    startBtn.textContent = "启动摄像头";
+    startBtn.textContent = isVision ? "启动摄像头" : "启动麦克风";
     startBtn.disabled = false;
   }
 });
@@ -542,21 +775,33 @@ resetBtn.addEventListener("click", () => {
 });
 
 sensInput.addEventListener("input", () => {
-  sensitivity = parseFloat(sensInput.value);
-  sensValue.textContent = sensitivity.toFixed(2);
+  const v = parseFloat(sensInput.value);
+  const cfg = SENS_CFG[currentMode];
+  sensValue.textContent = v.toFixed(cfg.decimals);
+  if (currentMode === "vision") {
+    pinchSensitivity = v;
+  } else {
+    voiceThreshold = v;
+    updateVoiceThresholdLine();
+  }
 });
 
-// Initial counter render
+// Initial render
 counterEl.textContent = count;
-sensValue.textContent = sensitivity.toFixed(2);
+applyModeUI(currentMode);
 
-// Visibility: pause loop when tab hidden to save battery
+// Pause loops when tab hidden (saves battery + avoids stale buffers)
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-  } else if (stream && landmarker && !rafId) {
-    lastVideoTime = -1;
-    tick();
+    if (voiceRafId) { cancelAnimationFrame(voiceRafId); voiceRafId = null; }
+  } else {
+    if (currentMode === "vision" && stream && landmarker && !rafId) {
+      lastVideoTime = -1;
+      visionTick();
+    } else if (currentMode === "voice" && analyser && !voiceRafId) {
+      voiceLoop();
+    }
   }
 });
 </script>
