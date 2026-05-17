@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>捏合计数器</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: rgba(15, 22, 36, 0.85);
+    --text: #e8eef7;
+    --muted: #8b97ac;
+    --accent: #4cc9f0;
+    --danger: #ef476f;
+    --ok: #06d6a0;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%; width: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow: hidden; user-select: none;
+  }
+  body {
+    display: flex; flex-direction: column;
+  }
+  #stage {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #video, #overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+  }
+  #overlay { pointer-events: none; }
+  #counter {
+    position: absolute;
+    top: 16px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 22vh;
+    line-height: 1;
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    text-shadow: 0 4px 24px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.95);
+    pointer-events: none;
+    z-index: 5;
+    transition: color 0.12s ease, transform 0.12s ease;
+  }
+  #counter.bump {
+    color: var(--ok);
+    transform: translateX(-50%) scale(1.08);
+  }
+  #stateChip {
+    position: absolute;
+    top: calc(22vh + 32px); left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 14px; font-weight: 600;
+    background: rgba(0,0,0,0.5);
+    color: var(--muted);
+    z-index: 5;
+    pointer-events: none;
+    backdrop-filter: blur(6px);
+  }
+  #stateChip.pinched { background: rgba(6,214,160,0.25); color: var(--ok); }
+  #stateChip.open    { background: rgba(239,71,111,0.20); color: var(--danger); }
+  #status {
+    position: absolute;
+    bottom: calc(100% + 12px); left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.7);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--muted);
+    max-width: 90vw;
+    text-align: center;
+    z-index: 10;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s;
+  }
+  #status.show { opacity: 1; }
+  #status.error { color: var(--danger); }
+  #controls {
+    position: relative;
+    background: var(--panel);
+    backdrop-filter: blur(12px);
+    padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    grid-template-rows: auto auto;
+    gap: 10px 12px;
+    align-items: center;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    z-index: 20;
+  }
+  #controls button {
+    border: none;
+    background: rgba(76,201,240,0.15);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 15px;
+    padding: 12px 18px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: transform 0.08s, background 0.15s;
+    min-height: 44px;
+    white-space: nowrap;
+  }
+  #controls button:hover { background: rgba(76,201,240,0.25); }
+  #controls button:active { transform: scale(0.96); }
+  #controls button:disabled {
+    opacity: 0.4; cursor: not-allowed;
+    background: rgba(255,255,255,0.06); color: var(--muted);
+  }
+  #startBtn { background: var(--accent); color: #001018; }
+  #startBtn:hover { background: #6fd5f3; }
+  #resetBtn { background: rgba(239,71,111,0.18); color: var(--danger); }
+  #resetBtn:hover { background: rgba(239,71,111,0.30); }
+  #sensWrap {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 10px;
+    color: var(--muted); font-size: 13px;
+  }
+  #sensWrap label { white-space: nowrap; }
+  #sensitivity {
+    flex: 1;
+    -webkit-appearance: none; appearance: none;
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px; outline: none;
+  }
+  #sensitivity::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 22px; height: 22px;
+    background: var(--accent);
+    border-radius: 50%; cursor: pointer;
+    border: 2px solid #001018;
+  }
+  #sensitivity::-moz-range-thumb {
+    width: 22px; height: 22px;
+    background: var(--accent);
+    border-radius: 50%; cursor: pointer;
+    border: 2px solid #001018;
+  }
+  #sensValue { font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; color: var(--text); }
+  #hint {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: var(--muted);
+    font-size: 16px;
+    max-width: 80vw;
+    z-index: 3;
+    pointer-events: none;
+  }
+  #hint .big { font-size: 22px; color: var(--text); margin-bottom: 8px; }
+  #hint.hidden { display: none; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div id="counter">0</div>
+    <div id="stateChip">未启动</div>
+    <div id="hint">
+      <div class="big">👋 捏合计数器</div>
+      <div>点击下方"启动摄像头"开始</div>
+      <div style="margin-top:8px;font-size:13px">握拳，拇指碰食指 = +1</div>
+    </div>
+  </div>
+  <div id="controls">
+    <button id="startBtn">启动摄像头</button>
+    <div id="status"></div>
+    <button id="flipBtn" disabled>翻转</button>
+    <button id="resetBtn">重置</button>
+    <div id="sensWrap">
+      <label for="sensitivity">灵敏度</label>
+      <input type="range" id="sensitivity" min="0.15" max="0.60" step="0.01" value="0.35">
+      <span id="sensValue">0.35</span>
+    </div>
+  </div>
+
+<script type="module">
+import { HandLandmarker, FilesetResolver } from
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs";
+
+const MEDIAPIPE_VERSION = "0.10.22";
+const WASM_URL   = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
+const MODEL_URL  = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+
+// MediaPipe hand landmark connections (21 points)
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],          // thumb
+  [0,5],[5,6],[6,7],[7,8],          // index
+  [5,9],[9,10],[10,11],[11,12],     // middle
+  [9,13],[13,14],[14,15],[15,16],   // ring
+  [13,17],[17,18],[18,19],[19,20],  // pinky
+  [0,17]                            // palm base
+];
+
+// DOM
+const $ = (id) => document.getElementById(id);
+const video      = $("video");
+const overlay    = $("overlay");
+const counterEl  = $("counter");
+const stateChip  = $("stateChip");
+const startBtn   = $("startBtn");
+const flipBtn    = $("flipBtn");
+const resetBtn   = $("resetBtn");
+const sensInput  = $("sensitivity");
+const sensValue  = $("sensValue");
+const statusEl   = $("status");
+const hintEl     = $("hint");
+const ctx        = overlay.getContext("2d");
+
+// State
+let landmarker = null;
+let stream = null;
+let facingMode = "user";
+let rafId = null;
+let lastVideoTime = -1;
+let audioCtx = null;
+let count = 0;
+let pinchState = "open";          // "open" | "pinched"
+let framesSinceHand = 0;
+let sensitivity = parseFloat(sensInput.value);
+const HYSTERESIS_GAP = 0.10;
+const HAND_LOST_FRAMES = 6;
+
+// ---------- UI helpers ----------
+function setStatus(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.classList.toggle("error", isError);
+  if (msg) {
+    statusEl.classList.add("show");
+    if (!isError) clearTimeout(setStatus._t), setStatus._t = setTimeout(() => statusEl.classList.remove("show"), 2200);
+  } else {
+    statusEl.classList.remove("show");
+  }
+}
+
+function updateCounter() {
+  counterEl.textContent = count;
+  counterEl.classList.remove("bump");
+  void counterEl.offsetWidth; // restart animation
+  counterEl.classList.add("bump");
+  setTimeout(() => counterEl.classList.remove("bump"), 180);
+}
+
+function setChip(text, cls) {
+  stateChip.textContent = text;
+  stateChip.className = "";
+  if (cls) stateChip.classList.add(cls);
+}
+
+// ---------- Audio ----------
+function beep() {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(880, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.35, t + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(t);
+  o.stop(t + 0.14);
+}
+
+// ---------- Drawing ----------
+function resizeOverlay() {
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h) return;
+  if (overlay.width !== w) overlay.width = w;
+  if (overlay.height !== h) overlay.height = h;
+}
+
+function drawSkeleton(landmarks, isPinched) {
+  const w = overlay.width, h = overlay.height;
+  ctx.clearRect(0, 0, w, h);
+  if (!landmarks || landmarks.length === 0) return;
+  const lm = landmarks[0];
+
+  // connections
+  ctx.lineWidth = Math.max(2, w / 320);
+  ctx.strokeStyle = "rgba(76,201,240,0.85)";
+  ctx.beginPath();
+  for (const [a, b] of HAND_CONNECTIONS) {
+    ctx.moveTo(lm[a].x * w, lm[a].y * h);
+    ctx.lineTo(lm[b].x * w, lm[b].y * h);
+  }
+  ctx.stroke();
+
+  // landmark dots
+  ctx.fillStyle = "rgba(232,238,247,0.9)";
+  for (let i = 0; i < lm.length; i++) {
+    if (i === 4 || i === 8) continue;
+    ctx.beginPath();
+    ctx.arc(lm[i].x * w, lm[i].y * h, Math.max(3, w / 220), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // thumb tip + index tip highlight
+  const tipColor = isPinched ? "#06d6a0" : "#ef476f";
+  ctx.fillStyle = tipColor;
+  for (const i of [4, 8]) {
+    ctx.beginPath();
+    ctx.arc(lm[i].x * w, lm[i].y * h, Math.max(6, w / 110), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // line between tips
+  ctx.strokeStyle = tipColor;
+  ctx.lineWidth = Math.max(3, w / 220);
+  ctx.beginPath();
+  ctx.moveTo(lm[4].x * w, lm[4].y * h);
+  ctx.lineTo(lm[8].x * w, lm[8].y * h);
+  ctx.stroke();
+}
+
+// ---------- Pinch detection ----------
+function dist(a, b) {
+  const dx = a.x - b.x, dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function processFrame(result) {
+  const lms = result.landmarks;
+  if (!lms || lms.length === 0) {
+    framesSinceHand++;
+    if (framesSinceHand >= HAND_LOST_FRAMES && pinchState !== "open") {
+      pinchState = "open";
+      setChip("未检测到手", "");
+    } else if (framesSinceHand === 1) {
+      setChip("未检测到手", "");
+    }
+    drawSkeleton(null, false);
+    return;
+  }
+  framesSinceHand = 0;
+  const lm = lms[0];
+  const refLen = dist(lm[5], lm[17]);
+  if (refLen < 1e-6) { drawSkeleton(lms, pinchState === "pinched"); return; }
+  const ratio = dist(lm[4], lm[8]) / refLen;
+  const closeThr = sensitivity;
+  const openThr  = sensitivity + HYSTERESIS_GAP;
+
+  if (pinchState === "open" && ratio < closeThr) {
+    pinchState = "pinched";
+    count++;
+    updateCounter();
+    beep();
+  } else if (pinchState === "pinched" && ratio > openThr) {
+    pinchState = "open";
+  }
+
+  setChip(
+    pinchState === "pinched" ? `捏合 (${ratio.toFixed(2)})` : `松开 (${ratio.toFixed(2)})`,
+    pinchState
+  );
+  drawSkeleton(lms, pinchState === "pinched");
+}
+
+// ---------- Main loop ----------
+function tick() {
+  if (!landmarker || !stream) return;
+  if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    resizeOverlay();
+    try {
+      const result = landmarker.detectForVideo(video, performance.now());
+      processFrame(result);
+    } catch (e) {
+      console.error("detectForVideo error:", e);
+    }
+  }
+  rafId = requestAnimationFrame(tick);
+}
+
+// ---------- Camera ----------
+async function startCamera() {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  const constraints = {
+    video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false
+  };
+  stream = await navigator.mediaDevices.getUserMedia(constraints);
+  video.srcObject = stream;
+  await video.play();
+  await new Promise(res => {
+    if (video.videoWidth) return res();
+    video.onloadedmetadata = () => res();
+  });
+  resizeOverlay();
+}
+
+// ---------- Landmarker init ----------
+async function initLandmarker() {
+  setStatus("加载模型中…");
+  const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+  try {
+    landmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+      runningMode: "VIDEO",
+      numHands: 1
+    });
+  } catch (gpuErr) {
+    console.warn("GPU delegate failed, falling back to CPU:", gpuErr);
+    landmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
+      runningMode: "VIDEO",
+      numHands: 1
+    });
+  }
+  setStatus("模型已就绪");
+}
+
+// ---------- Wire up ----------
+startBtn.addEventListener("click", async () => {
+  startBtn.disabled = true;
+  startBtn.textContent = "启动中…";
+  try {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+
+    if (!landmarker) await initLandmarker();
+    await startCamera();
+
+    hintEl.classList.add("hidden");
+    flipBtn.disabled = false;
+    startBtn.textContent = "重新启动";
+    startBtn.disabled = false;
+    setChip("等待手部出现", "");
+    pinchState = "open";
+    framesSinceHand = 0;
+    lastVideoTime = -1;
+    if (rafId) cancelAnimationFrame(rafId);
+    tick();
+  } catch (e) {
+    console.error(e);
+    let msg = "启动失败：" + (e && e.message ? e.message : e);
+    if (e && (e.name === "NotAllowedError" || e.name === "PermissionDeniedError")) {
+      msg = "摄像头权限被拒绝，请在浏览器地址栏允许摄像头后重试";
+    } else if (e && e.name === "NotFoundError") {
+      msg = "未找到可用摄像头";
+    } else if (location.protocol === "file:") {
+      msg = "请通过 http://localhost 访问，file:// 无法使用摄像头";
+    }
+    setStatus(msg, true);
+    statusEl.classList.add("show");
+    startBtn.textContent = "启动摄像头";
+    startBtn.disabled = false;
+  }
+});
+
+flipBtn.addEventListener("click", async () => {
+  facingMode = (facingMode === "user") ? "environment" : "user";
+  flipBtn.disabled = true;
+  try {
+    await startCamera();
+    setStatus("已切换摄像头");
+  } catch (e) {
+    setStatus("切换失败：" + e.message, true);
+    facingMode = (facingMode === "user") ? "environment" : "user";
+  } finally {
+    flipBtn.disabled = false;
+  }
+});
+
+resetBtn.addEventListener("click", () => {
+  count = 0;
+  updateCounter();
+  setStatus("已重置");
+});
+
+sensInput.addEventListener("input", () => {
+  sensitivity = parseFloat(sensInput.value);
+  sensValue.textContent = sensitivity.toFixed(2);
+});
+
+// Initial counter render
+counterEl.textContent = count;
+sensValue.textContent = sensitivity.toFixed(2);
+
+// Visibility: pause loop when tab hidden to save battery
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  } else if (stream && landmarker && !rafId) {
+    lastVideoTime = -1;
+    tick();
+  }
+});
+</script>
+</body>
+</html>
