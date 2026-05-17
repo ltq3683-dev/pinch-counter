@@ -167,6 +167,23 @@
   }
   #hint .big { font-size: 22px; color: var(--text); margin-bottom: 8px; }
   #hint.hidden { display: none; }
+  #errBox {
+    position: absolute;
+    top: 12px; left: 12px; right: 12px;
+    background: rgba(239,71,111,0.95);
+    color: #fff;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.45;
+    z-index: 100;
+    max-height: 70vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  #errBox b { display: block; margin-bottom: 4px; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -180,6 +197,7 @@
       <div>点击下方"启动摄像头"开始</div>
       <div style="margin-top:8px;font-size:13px">握拳，拇指碰食指 = +1</div>
     </div>
+    <div id="errBox" hidden></div>
   </div>
   <div id="controls">
     <button id="startBtn">启动摄像头</button>
@@ -193,13 +211,43 @@
     </div>
   </div>
 
+<script>
+// Global error catcher — must run before the module script so import failures are visible
+(function () {
+  const box = document.getElementById("errBox");
+  function show(title, msg) {
+    if (!box) return;
+    box.hidden = false;
+    box.innerHTML = "<b>" + title + "</b>";
+    const pre = document.createElement("div");
+    pre.textContent = msg;
+    box.appendChild(pre);
+  }
+  window.addEventListener("error", (e) => {
+    const msg = (e.message || "") + (e.filename ? "\n@ " + e.filename + ":" + e.lineno : "");
+    show("脚本错误", msg || String(e));
+  }, true);
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e.reason;
+    show("未处理的 Promise 错误", (r && (r.stack || r.message)) || String(r));
+  });
+  // Detect if module never executed (e.g. CDN blocked) — main script sets window.__APP_LOADED = true
+  setTimeout(() => {
+    if (!window.__APP_LOADED) {
+      show("脚本未加载", "10 秒内 JS 模块没有执行。可能原因：\n• CDN (cdn.jsdelivr.net) 被拦截\n• MediaPipe 版本 URL 404\n• 浏览器不支持 ES Module\n\n请刷新重试，或在 Wi-Fi/数据切换后重试。");
+    }
+  }, 10000);
+})();
+</script>
 <script type="module">
+window.__APP_LOADED = true;
 import { HandLandmarker, FilesetResolver } from
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs";
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs";
 
-const MEDIAPIPE_VERSION = "0.10.22";
+const MEDIAPIPE_VERSION = "0.10.35";
 const WASM_URL   = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
-const MODEL_URL  = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+// Local model (hosted alongside index.html) — avoids storage.googleapis.com which is blocked in some regions
+const MODEL_URL  = "./hand_landmarker.task";
 
 // MediaPipe hand landmark connections (21 points)
 const HAND_CONNECTIONS = [
